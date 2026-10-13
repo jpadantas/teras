@@ -9,7 +9,7 @@ Run-time assurance components, following the pattern of ASTM F3269-21.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -34,6 +34,7 @@ class MonitorConfig:
     buffer_margin_s: float = 1.0 # extra lead time added to T_rec when triggering (s)
     sensor_range_ft: float = 3.0 * NM_TO_FT  # traffic detection range (ft)
     odd_confidence_min: float = 0.85        # minimum detector confidence inside the envelope
+    own_intent: bool = False     # project the ownship along its own plan, not its current velocity
 
 
 @dataclass
@@ -43,7 +44,7 @@ class MonitorVerdict:
     is_safe: bool
     trigger_fallback: bool
     t_mon: Optional[float] = None
-    t_wc_projected: Optional[float] = None
+    t_wc_projected: Optional[float] = None  # set whenever a loss of well clear is projected (alert)
     time_margin_s: Optional[float] = None  # (t_wc - t_mon) - T_rec
     status: Optional[WellClearStatus] = None
 
@@ -59,6 +60,14 @@ class RuntimeSafetyMonitor:
     Because the monitor acts as late as the budget allows, the reported
     margin ``(t_wc - t_mon) - t_rec`` equals ``buffer_margin_s`` whenever the
     intruder is detected early enough.
+
+    Every verdict that projects a loss of well clear within the horizon
+    carries ``t_wc_projected``, also before the trigger; that is the alert an
+    operator would see (``SimulationRecord.t_alert``).
+
+    With ``own_intent`` the ownship is projected along its own planned
+    trajectory (``own_plan`` from ``plan_index`` on), which it knows; the
+    intruder is still projected along its current velocity.
     """
 
     def __init__(self, thresholds: WellClearThresholds, config: MonitorConfig = None):
@@ -81,8 +90,14 @@ class RuntimeSafetyMonitor:
         own_state: AircraftState,
         intr_state: AircraftState,
         intr_detected: bool,
+        own_plan: Optional[List[AircraftState]] = None,
+        plan_index: int = 0,
     ) -> MonitorVerdict:
-        """Project the encounter forward and return this cycle's verdict."""
+        """Project the encounter forward and return this cycle's verdict.
+
+        ``own_plan[plan_index]`` is the planned state at time ``t``; it is used
+        only when ``config.own_intent`` is set.
+        """
         # Current well-clear status
         current_wc = evaluate_well_clear(
             own_state.pos,
@@ -118,18 +133,30 @@ class RuntimeSafetyMonitor:
         n_proj = int(horizon / dt)
 
         projected_t_wc = None
+        use_plan = self.config.own_intent and own_plan is not None and len(own_plan) > 1
+        plan_dt = own_plan[1].timestamp - own_plan[0].timestamp if use_plan else 0.0
 
-        # Straight-line projection along the current velocities
+        # Projection: intruder along its current velocity; ownship along its
+        # current velocity, or along its own plan with ``own_intent``
         for step in range(1, n_proj + 1):
             t_fut = step * dt
-            p_own_proj = own_state.pos + own_state.vel * t_fut
+            if use_plan:
+                k = plan_index + int(round(t_fut / plan_dt))
+                if k < len(own_plan):
+                    p_own_proj, v_own_proj = own_plan[k].pos, own_plan[k].vel
+                else:  # past the end of the plan: continue its last state
+                    last = own_plan[-1]
+                    p_own_proj = last.pos + last.vel * (t_fut - (len(own_plan) - 1 - plan_index) * plan_dt)
+                    v_own_proj = last.vel
+            else:
+                p_own_proj, v_own_proj = own_state.pos + own_state.vel * t_fut, own_state.vel
             p_intr_proj = intr_state.pos + intr_state.vel * t_fut
             p_own_proj[2] = max(0.0, p_own_proj[2])     # no projection below the ground
             p_intr_proj[2] = max(0.0, p_intr_proj[2])
 
             proj_wc = evaluate_well_clear(
                 p_own_proj,
-                own_state.vel,
+                v_own_proj,
                 p_intr_proj,
                 intr_state.vel,
                 self.thresholds,
@@ -165,6 +192,7 @@ class RuntimeSafetyMonitor:
             timestamp=t,
             is_safe=True,
             trigger_fallback=False,
+            t_wc_projected=projected_t_wc,  # alert without trigger, or None
             status=current_wc,
         )
 
@@ -218,9 +246,10 @@ class EnvelopeMonitor:
 class ContingencyManager:
     """Contingency manager: flies the recovery maneuver once triggered.
 
-    Maneuvers (both climb at about 700 ft/min in a coordinated turn at ``bank_deg``):
+    Maneuvers (all climb at about 700 ft/min in a coordinated turn at ``bank_deg``):
     - 'breakout': turn to heading 060, away from the final approach to runway 09.
-    - any other value: turn 45 deg right of the heading at activation.
+    - 'left': turn 45 deg left of the heading at activation.
+    - any other value (e.g. 'right'): turn 45 deg right of the heading at activation.
     """
 
     def __init__(self, maneuver_type: str = "breakout", bank_deg: float = 25.0,
@@ -251,6 +280,8 @@ class ContingencyManager:
             # The heading is fixed; it does not depend on where the intruder is.
             if self.maneuver_type == "breakout":
                 self.evasion_heading = 60.0
+            elif self.maneuver_type == "left":
+                self.evasion_heading = (state.heading_deg - 45.0) % 360.0
             else:
                 self.evasion_heading = (state.heading_deg + 45.0) % 360.0
 

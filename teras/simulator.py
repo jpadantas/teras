@@ -39,6 +39,7 @@ class SimulationRecord:
 
     # Key timeline milestones
     t_det: Optional[float] = None
+    t_alert: Optional[float] = None       # first projected loss of well clear (alert to the operator)
     t_mon: Optional[float] = None
     t_wc_projected: Optional[float] = None
     t_wc_actual: Optional[float] = None
@@ -60,22 +61,24 @@ class EncounterSimulator:
     """Simulate a close-proximity encounter between an ownship and one intruder.
 
     The ownship follows its nominal trajectory until the run-time safety
-    monitor or the envelope monitor triggers; from the next step on the
-    contingency manager flies the recovery. The intruder always follows its
-    trajectory.
+    monitor or the envelope monitor triggers, or an operator commands the
+    recovery; from the next step on the contingency manager flies the
+    recovery (``maneuver_type``, see ``ContingencyManager``). The intruder
+    always follows its trajectory.
     """
 
     def __init__(
         self,
         thresholds: WellClearThresholds = None,
         monitor_config: MonitorConfig = None,
+        maneuver_type: str = "breakout",
     ):
         self.thresholds = thresholds or WellClearThresholds.do365_terminal()
         self.monitor_config = monitor_config or MonitorConfig()
 
         self.monitor = RuntimeSafetyMonitor(self.thresholds, self.monitor_config)
         self.envelope_monitor = EnvelopeMonitor(self.monitor_config)
-        self.contingency = ContingencyManager(maneuver_type="breakout")
+        self.contingency = ContingencyManager(maneuver_type=maneuver_type)
 
     def run(
         self,
@@ -87,6 +90,7 @@ class EncounterSimulator:
         enable_recovery: bool = True,
         enable_lookahead: bool = True,
         early_stop_on_lowc: bool = False,
+        recovery_command_time: Optional[float] = None,
     ) -> SimulationRecord:
         """Run one encounter and return its time history.
 
@@ -99,6 +103,9 @@ class EncounterSimulator:
             enable_recovery: if False, the ownship never leaves its nominal trajectory.
             enable_lookahead: if False, the run-time safety monitor is not evaluated.
             early_stop_on_lowc: stop at the first loss of well clear.
+            recovery_command_time: if set, an operator commands the recovery at
+                this time (s), whatever the monitors say; it is flown from the
+                next step on, as a monitor trigger would be.
         """
         _check_time_step(own_nominal_trajectory, dt, "own_nominal_trajectory")
         _check_time_step(intr_trajectory, dt, "intr_trajectory")
@@ -145,9 +152,15 @@ class EncounterSimulator:
                     own_state=own_state,
                     intr_state=intr_state,
                     intr_detected=intr_detected,
+                    # the nominal plan is the ownship's intent until a recovery is flown
+                    own_plan=None if recovering else own_nominal_trajectory,
+                    plan_index=i,
                 )
             else:
                 verdict = MonitorVerdict(timestamp=t, is_safe=True, trigger_fallback=False)
+
+            if verdict.t_wc_projected is not None and record.t_alert is None:
+                record.t_alert = t
 
             if verdict.trigger_fallback and record.t_mon is None:
                 record.t_mon = t
@@ -156,7 +169,9 @@ class EncounterSimulator:
                     record.lead_time_margin_s = (verdict.t_wc_projected - t) - self.monitor_config.t_rec
 
             # 5. Hand over to the contingency manager from the next step on
-            if enable_recovery and not recovering and (verdict.trigger_fallback or out_of_envelope):
+            commanded = recovery_command_time is not None and t >= recovery_command_time - 1e-9
+            if enable_recovery and not recovering and (verdict.trigger_fallback or out_of_envelope
+                                                       or commanded):
                 recovering = True
                 record.recovery_triggered = True
 

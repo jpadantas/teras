@@ -1,0 +1,27 @@
+[Human control window] Monte Carlo, DO-365 terminal well clear
+  seed 2026; 8000 geometries sampled; 1212 lose well clear without action; rejected: 50 near the ground, 107 inside well clear and 53 alerted from t = 0 even when started 90 s earlier, 2 other; accepted N = 1000 (266 started earlier to observe the onsets)
+  intruders: pattern 291, straight-in 395, crossing 314
+  [H45] alert 45 s ahead: no alert before the loss of well clear in 0/1000; some recovery still works at the alert: 932/1000
+     W_avail median 17.2 s, IQR 10.1-32.6 s; T_rec median 7.6 s
+     W_avail >= 10.5 s (reference W_req): 73.6% (95% CI 70.8-76.2%)
+     sensitivity: 5 s -> 88.6%, 10 s -> 75.5%, 15 s -> 55.8%, 20 s -> 44.5%, 25 s -> 39.3%
+     extra W_req near 10.5 s (e.g. link latency): +1 s -> 70.7%, +2 s -> 66.8%
+     by closing speed at the alert (W_req = 10.5 s): 0-50 kt: 65.7% of 251; 50-100 kt: 75.8% of 62; 100-150 kt: 71.6% of 408; >= 150 kt: 83.2% of 279
+     by intruder type: pattern 69.1%, straight-in 68.1%, crossing 84.7%
+  [H30] alert 30 s ahead: no alert before the loss of well clear in 0/1000; some recovery still works at the alert: 932/1000
+     W_avail median 15.5 s, IQR 10.0-20.5 s; T_rec median 7.6 s
+     W_avail >= 10.5 s (reference W_req): 73.2% (95% CI 70.4-75.9%)
+     sensitivity: 5 s -> 88.5%, 10 s -> 75.1%, 15 s -> 53.6%, 20 s -> 28.1%, 25 s -> 10.9%
+     extra W_req near 10.5 s (e.g. link latency): +1 s -> 70.1%, +2 s -> 65.7%
+     by closing speed at the alert (W_req = 10.5 s): 0-50 kt: 65.1% of 249; 50-100 kt: 73.4% of 64; 100-150 kt: 71.5% of 411; >= 150 kt: 83.0% of 276
+     by intruder type: pattern 68.0%, straight-in 68.1%, crossing 84.4%
+  [I45] 45 s, own flight plan: no alert before the loss of well clear in 0/1000; some recovery still works at the alert: 949/1000
+     W_avail median 37.1 s, IQR 32.3-39.2 s; T_rec median 7.6 s
+     W_avail >= 10.5 s (reference W_req): 93.6% (95% CI 91.9-95.0%)
+     sensitivity: 5 s -> 93.9%, 10 s -> 93.6%, 15 s -> 93.3%, 20 s -> 92.8%, 25 s -> 90.6%
+     extra W_req near 10.5 s (e.g. link latency): +1 s -> 93.5%, +2 s -> 93.5%
+     by closing speed at the alert (W_req = 10.5 s): 0-50 kt: 76.2% of 248; 50-100 kt: 95.8% of 48; 100-150 kt: 99.2% of 250; >= 150 kt: 99.8% of 451
+     by intruder type: pattern 79.4%, straight-in 100.0%, crossing 98.7%
+  H30 vs H45 at W_req = 10.5 s: 0 encounters gain meaningful control, 4 lose it
+  I45 vs H45 at W_req = 10.5 s: 200 encounters gain meaningful control, 0 lose it
+  figure example: encounter 40 (pattern), loss of well clear at 72.7 s; alert at 58.3 s (straight line) and 27.7 s (own flight plan); last useful command at 64.5 s and 64.5 s

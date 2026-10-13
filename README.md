@@ -14,11 +14,14 @@ What it provides:
   constant bank angle, and straight-in approaches.
 - **Well-clear evaluation**: the RTCA DO-365 formulation (range, horizontal miss
   distance, modified tau, vertical separation), with configurable thresholds.
-- **Run-time safety monitor**: projects the encounter ahead and triggers a
-  recovery while there is still time to fly it (lead-time budget `t_rec`).
+- **Run-time safety monitor**: projects the encounter ahead, alerts as soon as
+  it projects a loss of well clear (`t_alert`), and triggers a recovery while
+  there is still time to fly it (lead-time budget `t_rec`).
 - **Envelope monitor**: triggers the recovery when the detector confidence or
   navigation integrity leaves its validated envelope (fault injection).
-- **Contingency manager**: flies a climbing breakout maneuver once triggered.
+- **Contingency manager**: flies a climbing recovery maneuver (breakout to a
+  fixed heading, or a 45 deg turn left or right) once triggered or once an
+  operator commands it (`recovery_command_time`).
 - **Interactive dashboard** (Streamlit) to explore all of the above.
 
 ## Getting started
@@ -57,7 +60,7 @@ sim = EncounterSimulator(
 )
 rec = sim.run(own, intruder, dt=0.1, enable_recovery=True)
 
-print(rec.t_det, rec.t_mon, rec.t_wc_projected)   # detection, monitor trigger, projected loss of well clear (s)
+print(rec.t_det, rec.t_alert, rec.t_mon, rec.t_wc_projected)   # detection, alert, monitor trigger, projected loss of well clear (s)
 print(rec.experienced_lowc, rec.min_horizontal_separation)
 ```
 
@@ -81,11 +84,11 @@ streamlit run apps/dashboard.py     # or: python apps/dashboard.py
 | `TrafficPatternGenerator`, `AirfieldConfig` | pattern geometry (runway 09, 5000 ft; downwind 0.75 NM abeam, base 1 NM out) and trajectories |
 | `create_*` in `teras.scenarios` | ready-made encounters: in-trail pattern traffic, base-to-final conflict, downwind vs. final |
 | `WellClearThresholds`, `evaluate_well_clear` | well-clear volume and its evaluation; presets `do365_phase1()`, `do365_terminal()` and `astm_f3442()` |
-| `MonitorConfig` | `t_rec`, trigger buffer, projection horizon, detection range, envelope limits |
+| `MonitorConfig` | `t_rec`, trigger buffer, projection horizon, detection range, envelope limits, `own_intent` (project the ownship along its own plan) |
 | `RuntimeSafetyMonitor` | lead-time-budget monitor (see below) |
 | `EnvelopeMonitor` | detector-confidence and navigation-integrity monitor |
-| `ContingencyManager` | recovery maneuver |
-| `EncounterSimulator`, `SimulationRecord` | the simulation loop and its output |
+| `ContingencyManager` | recovery maneuver: `breakout`, `left` or `right` |
+| `EncounterSimulator`, `SimulationRecord` | the simulation loop and its output; `run(..., recovery_command_time=t)` commands the recovery at `t` |
 
 ## Model and assumptions
 
@@ -102,9 +105,14 @@ streamlit run apps/dashboard.py     # or: python apps/dashboard.py
   margin `(t_wc - t_mon) - t_rec` therefore equals `buffer_margin_s` by
   construction. Projection along the current velocity is inexact during turns,
   and a conflict that only arises after a later turn may be seen too late.
-- **Recovery**: requested at one step and flown from the next; a climbing turn
-  at the pattern bank angle (25 deg) to a fixed heading (060), whatever the
-  intruder's position.
+  The alert time `t_alert` is the first step at which the projection finds a
+  loss of well clear within the horizon, before any trigger. With
+  `MonitorConfig(own_intent=True)` the ownship is projected along its own
+  planned trajectory instead; the intruder still along its current velocity.
+- **Recovery**: requested at one step (by a monitor or an operator command) and
+  flown from the next; a climbing turn at the pattern bank angle (25 deg) to a
+  fixed heading (060, default) or 45 deg left or right of the current heading,
+  whatever the intruder's position.
 - **Defaults are illustrative**: speeds, `t_rec`, the trigger buffer, bank
   angle and recovery maneuver are assumptions, not properties of any aircraft
   or sensor. The default well-clear volume is the DO-365 terminal-area one.
@@ -125,6 +133,10 @@ studies/      self-contained studies built on TERAS (scripts, figures, results)
   alert burden of the en-route well-clear threshold in the pattern, the
   monitor's lead-time budget, and the minimum detection range implied by a
   recovery time. Reproduces the simulation results of the accompanying preprint.
+- [`studies/human-control-window`](studies/human-control-window): Monte Carlo
+  over 1000 random encounters of the time a remote pilot has between the
+  monitor's alert and the last command that still keeps well clear, compared
+  with the time a pilot needs, for straight-line and flight-plan alerts.
 
 ## Tests
 

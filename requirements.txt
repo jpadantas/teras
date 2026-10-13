@@ -1,0 +1,13 @@
+# Installed by setup.bat / setup.sh into .venv
+# (studies were produced with numpy 1.26.4, matplotlib 3.10.8, streamlit 1.55.0, plotly 6.6.0)
+
+# Simulator
+numpy>=1.26
+matplotlib>=3.8
+
+# Dashboard (apps/dashboard.py)
+streamlit>=1.40
+plotly>=5.20
+
+# Tests
+pytest>=7

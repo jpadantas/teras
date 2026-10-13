@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "TERAS: Terminal Encounter and Runtime Assurance Simulator"
+type: software
+version: 0.1.0
+date-released: 2026-10-13
+license: MIT
+repository-code: "https://github.com/jpadantas/teras"
+authors:
+  - family-names: Dantas
+    given-names: Joao P. A.
+  - family-names: Pleffken
+    given-names: Daniel R.
+  - family-names: Dietzsch
+    given-names: Gabriel
+keywords:
+  - detect and avoid
+  - well clear
+  - run-time assurance
+  - terminal airspace
+  - uncrewed aircraft

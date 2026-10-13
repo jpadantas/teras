@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teras"
+version = "0.1.0"
+description = "Terminal Encounter and Runtime Assurance Simulator: kinematic encounters, DO-365 well clear, run-time monitoring and contingency recovery in shared terminal airspace"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Joao P. A. Dantas" },
+    { name = "Daniel R. Pleffken" },
+    { name = "Gabriel Dietzsch" },
+]
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.40", "plotly>=5.20"]
+studies = ["matplotlib>=3.8"]
+dev = ["pytest>=7"]
+
+[project.urls]
+Repository = "https://github.com/jpadantas/teras"
+
+[tool.setuptools]
+packages = ["teras"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "studies"]
+pythonpath = ["."]
+
+[tool.pyright]
+# the study scripts import their siblings (figstyle, run_experiments) by path
+extraPaths = ["studies/terminal-airspace-safety-requirements"]

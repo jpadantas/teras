@@ -1,0 +1,36 @@
+[Exp 1] Alert burden against correctly flown in-trail traffic
+  25 deterministic geometries, spacing 0.40-1.40 NM; 29 values of HMD*; 2175 runs (3 time/vertical variants)
+  DO-365 terminal: 1/25; pairs spaced up to 0.40 NM
+  ASTM F3442: 3/25; pairs spaced up to 0.48 NM
+  DO-365 en route: 14/25; pairs spaced up to 0.94 NM
+  relative to tau*_mod = 0 s, ZTHR = 450 ft: tau*_mod = 35 s changes counts at HMD* 1125-2125 ft (by +1 to +1); ZTHR = 250 ft changes counts at HMD* 3000-4500 ft (by -4 to -1)
+  spacing 0.94 NM: closest 3881 ft (vertical 350 ft) at t=87.6 s (ownship heading 180, leader 90)
+  spacing 0.98 NM: closest 4073 ft (vertical 365 ft) at t=86.8 s (ownship heading 180, leader 90)
+[Exp 2] Base-to-final conflict, DO-365 terminal well clear
+  ownship 80 kt, intruder 95 kt from 1.8 NM; initial range 1.10 NM; detection range 3.0 NM
+  unmitigated: t_wc = 24.8 s, closest 101 ft horizontally with 57 ft vertically (NMAC needs < 500 ft and < 100 ft)
+  assumed T_rec = 6.0 s: t_mon = 17.8 s, t_wc projected = 24.8 s, margin = 1.00 s (= trigger buffer)
+     breakout flown: LoWC = True from t = 28.2 s for 12.0 s; closest 1334 ft
+  T_rec the breakout needs in this geometry: 7.0 s
+  T_rec = 8 s: t_mon = 15.8 s, LoWC = False, closest 1751 ft
+  needed T_rec for neighbouring starts: 1.6 NM -> 8.0 s, 1.7 NM -> 7.5 s, 1.8 NM -> 7.0 s, 1.9 NM -> 7.0 s, 2.0 NM -> 7.0 s
+[Exp 3] Coupling between detection range (SR-1) and lead time (SR-6)
+  91 detection ranges x 4 values of T_rec = 364 runs
+  T_rec=6 s: R*_det = 0.44 NM; plateau = 1.00 s
+  T_rec=8 s: R*_det = 0.51 NM; plateau = 1.00 s
+  T_rec=10 s: R*_det = 0.58 NM; plateau = 1.00 s
+  T_rec=12 s: R*_det = 0.65 NM; plateau = 1.00 s
+[Exp 4] Speed sensitivity, worst case over starts 1.2-3.0 NM, T_rec = 10 s
+  70/80 kt: 7 conflicts (0 missed by the projection); R*_det 0.43-0.53 NM; needed T_rec 5.5-8.0 s
+  70/95 kt: 8 conflicts (0 missed by the projection); R*_det 0.31-0.56 NM; needed T_rec 6.5-13.5 s
+  70/110 kt: 11 conflicts (0 missed by the projection); R*_det 0.35-0.59 NM; needed T_rec 7.0-17.5 s
+  70/125 kt: 12 conflicts (0 missed by the projection); R*_det 0.39-0.65 NM; needed T_rec 7.0-18.5 s
+  80/80 kt: 6 conflicts (0 missed by the projection); R*_det 0.50-0.55 NM; needed T_rec 5.0-8.0 s
+  80/95 kt: 7 conflicts (0 missed by the projection); R*_det 0.29-0.58 NM; needed T_rec 7.0-11.0 s
+  80/110 kt: 9 conflicts (0 missed by the projection); R*_det 0.33-0.61 NM; needed T_rec 7.5-14.0 s
+  80/125 kt: 12 conflicts (0 missed by the projection); R*_det 0.37-0.64 NM; needed T_rec 8.0-15.5 s
+  90/80 kt: 6 conflicts (0 missed by the projection); R*_det 0.27-0.57 NM; needed T_rec 2.0-9.0 s
+  90/95 kt: 5 conflicts (0 missed by the projection); R*_det 0.53-0.60 NM; needed T_rec 6.5-9.0 s
+  90/110 kt: 8 conflicts (0 missed by the projection); R*_det 0.30-0.63 NM; needed T_rec 8.0-11.5 s
+  90/125 kt: 10 conflicts (0 missed by the projection); R*_det 0.34-0.67 NM; needed T_rec 8.5-13.0 s
+  overall: 101 conflicting geometries, 0 not projected before t_wc; over the rest, R*_det 0.27-0.67 NM; needed T_rec 2.0-18.5 s

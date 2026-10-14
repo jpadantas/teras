@@ -387,7 +387,7 @@ def plot(rows, out_dir):
     from matplotlib.ticker import PercentFormatter
     import figstyle as fs
     fs.apply()
-    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(fs.PAGE_W, 2.8), layout="constrained",
+    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(fs.PAGE_W, 2.55), layout="constrained",
                                      gridspec_kw={"width_ratios": [1.45, 1.0, 1.0]})
     colors = {"H45": fs.OWN, "H30": fs.BLUES[0], "I45": fs.TERM}
     styles = {"H45": "-", "H30": (0, (4, 2)), "I45": "-"}

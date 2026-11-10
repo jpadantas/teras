@@ -13,6 +13,7 @@ authors = [
     { name = "Joao P. A. Dantas" },
     { name = "Daniel R. Pleffken" },
     { name = "Gabriel Dietzsch" },
+    { name = "Pedro Kukulka de Albuquerque" },
 ]
 dependencies = [
     "numpy>=1.26",

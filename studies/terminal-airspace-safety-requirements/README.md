@@ -2,8 +2,9 @@
 
 This folder reproduces the simulation results of the preprint
 
-> J. P. A. Dantas, D. R. Pleffken, and G. Dietzsch, "Safety Requirements and
-> Evidence Needs for Crewed-Uncrewed Operations in Shared Terminal Airspace,"
+> J. P. A. Dantas, D. R. Pleffken, G. Dietzsch, and P. Kukulka de Albuquerque,
+> "Safety Requirements and Evidence Needs for Crewed-Uncrewed Operations in
+> Shared Terminal Airspace,"
 > preprint, 2026.
 
 Figure and section numbers refer to the current version of the manuscript.

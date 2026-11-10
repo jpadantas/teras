@@ -6,8 +6,9 @@ Reproduce the simulation study of the paper (Section VII, Figs. 4 and 5).
 
 Outputs
   figures/fig_nuisance_alert_rates.pdf   Fig. 4  (Experiment 1)
-  figures/fig_lead_time_recovery.pdf     Fig. 5  (Experiments 2 and 3, panels a-c)
+  figures/fig_lead_time_recovery.pdf     Fig. 5  (Experiments 2 and 3, panels a-b)
   results/teras_results.txt              every number quoted in Section VII (incl. Experiment 4)
+  results/exp4_geometries.json           per-geometry results of Experiment 4
 
 Well-clear volumes (standards, not assumptions)
   DO-365 en route  : HMD* 4000 ft, ZTHR 450 ft, tau*_mod 35 s
@@ -17,25 +18,31 @@ Well-clear volumes (standards, not assumptions)
 Notes on interpreting the results
   * All runs are deterministic; counts are counts of geometries, not samples
     from a distribution of encounters.
-  * Experiment 1: spacing is the initial along-track spacing on downwind; the
-    run lasts 120 s, until the ownship is established on final. The report
-    gives where the closest approach of each pair happens.
+  * Loss of well clear is counted, not DO-365 alerts (alerting is not modelled).
+  * Experiment 1: spacing is the initial along-track spacing on downwind. Both
+    aircraft fly at 90 kt, so the spacing holds; each run ends when the leader
+    touches down. With the ownship 5 kt faster (reported separately) it closes
+    on the leader on short final, which is a real conflict, not a nuisance.
+  * Experiments 2-4: each run ends when either aircraft touches down; an
+    aircraft on the runway is no longer part of the airborne encounter.
   * F6 triggers when the projected time to loss of well clear falls to
     T_rec + MonitorConfig.buffer_margin_s (1.0 s). With early detection the
     reported margin therefore equals that buffer by construction.
-  * T_rec is an input to the monitor; the time the breakout really needs comes
-    out of the vehicle model and the geometry. Experiment 2 shows the two
-    disagreeing.
-  * Speeds, T_rec and the breakout manoeuvre are assumed, not measured.
+  * The recovery starts on the step after the trigger, with no latency or
+    roll-in; the breakout is a climbing (~700 ft/min) 25-deg-bank turn to
+    heading 060, whatever the intruder does. The "needed T_rec" is therefore
+    the trigger lead time this instantaneous manoeuvre needs; Experiment 4
+    also gives it for 45-deg left and right turns.
+  * Speeds, T_rec and the recovery manoeuvres are assumed, not measured.
 """
 
 import argparse
+import json
 import os
 import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.ticker import PercentFormatter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))  # repository root
@@ -62,24 +69,61 @@ SUAS = WellClearThresholds.astm_f3442()
 CONFLICT = dict(speed_own_kt=80.0, speed_intr_kt=95.0, intr_start_nm=1.8)
 T_REC_ASSUMED = 6.0
 T_REC_SUFFICIENT = 8.0
-EXP1_WINDOW_S = 120.0
+# Experiment 1: ownship and leader at the same speed, so the in-trail spacing is
+# kept and every loss of well clear is against correctly separated traffic. The
+# overtaking variant (ownship 5 kt faster) is reported separately.
+EXP1_SPEEDS_KT = (90.0, 90.0)
+EXP1_OVERTAKE_KT = (90.0, 85.0)
+RUN_S = 200.0             # trajectories are built this long, then cut at touchdown
+RECOVERY_MANEUVERS = ("breakout", "left", "right")
+
+
+def touchdown_index(traj):
+    """Index of the first state on the runway (z = 0), or len(traj) if none."""
+    for k, s in enumerate(traj):
+        if s.z <= 0.0:
+            return k
+    return len(traj)
+
+
+def _cut(own, intr, n):
+    return own[:n], intr[:n]
 
 
 def _conflict(**kw):
+    """Exp. 2-4 encounter, ended when either aircraft touches down.
+
+    After touchdown an aircraft is on the runway, not in the airborne
+    encounter, so the run stops there (earlier versions let it roll on).
+    """
     p = dict(CONFLICT)
     p.update(kw)
-    return create_base_final_conflict(duration_s=80.0, dt=DT, **p)
+    own, intr = create_base_final_conflict(duration_s=RUN_S, dt=DT, **p)
+    return _cut(own, intr, min(touchdown_index(own), touchdown_index(intr)))
 
 
-def _run(own, intr, th=TERMINAL, recovery=True, **cfg):
-    return EncounterSimulator(thresholds=th, monitor_config=MonitorConfig(**cfg)).run(
-        own, intr, dt=DT, enable_recovery=recovery)
+def _in_trail(spacing_nm, speeds_kt):
+    """Exp. 1 pair, ended when the leader touches down (after that it is a runway, not an airborne, question)."""
+    own, intr = create_nominal_pattern_encounter(
+        spacing_nm=spacing_nm, speed_own_kt=speeds_kt[0], speed_intr_kt=speeds_kt[1],
+        duration_s=RUN_S, dt=DT)
+    return _cut(own, intr, touchdown_index(intr))
 
 
-def needed_t_rec(own, intr, th=TERMINAL, grid=np.arange(0.5, 25.01, 0.5)):
-    """Smallest T_rec on the grid for which the breakout keeps well clear (None if none)."""
+def _run(own, intr, th=TERMINAL, recovery=True, maneuver="breakout", **cfg):
+    return EncounterSimulator(thresholds=th, monitor_config=MonitorConfig(**cfg),
+                              maneuver_type=maneuver).run(own, intr, dt=DT, enable_recovery=recovery)
+
+
+def needed_t_rec(own, intr, th=TERMINAL, grid=np.arange(0.5, 25.01, 0.5), maneuver="breakout"):
+    """Smallest T_rec on the grid for which the recovery keeps well clear (None if none).
+
+    The recovery starts on the step after the trigger, with no latency and no
+    roll-in, so this is the trigger lead time an instantaneous recovery of the
+    given type needs, not a measured vehicle response time.
+    """
     for t_rec in grid:
-        rec = _run(own, intr, th, t_rec=t_rec)
+        rec = _run(own, intr, th, maneuver=maneuver, t_rec=t_rec)
         if rec.t_mon is not None and not rec.experienced_lowc:
             return float(t_rec)
     return None
@@ -106,18 +150,18 @@ def min_detection_range(own, intr, t_rec, th=TERMINAL, lo=0.1, hi=3.0, iters=12)
 # ---------------------------------------------------------------------------
 # Experiment 1: alert burden against correctly flown in-trail traffic
 # ---------------------------------------------------------------------------
-def exp1_alert_burden(spacings_nm=None, hmd_values_ft=None):
-    """Spacings (of 25) whose correctly flown in-trail pair enters the volume, per HMD*."""
+def exp1_alert_burden(spacings_nm=None, hmd_values_ft=None, speeds_kt=EXP1_SPEEDS_KT):
+    """Spacings (of 25) whose correctly flown in-trail pair loses well clear, per HMD*.
+
+    Loss of well clear is counted, not DO-365 alerts: alerting is not modelled,
+    and alerts would begin earlier, so the counts are a lower bound on alerts.
+    """
     if spacings_nm is None:
         spacings_nm = np.linspace(0.4, 1.4, 25)
     if hmd_values_ft is None:
         hmd_values_ft = np.arange(1000.0, 4500.0 + 1, 125.0)
 
-    trajs = [
-        create_nominal_pattern_encounter(
-            spacing_nm=sp, speed_own_kt=90.0, speed_intr_kt=85.0, duration_s=EXP1_WINDOW_S, dt=DT)
-        for sp in spacings_nm
-    ]
+    trajs = [_in_trail(sp, speeds_kt) for sp in spacings_nm]
 
     def violating(th):
         sim = EncounterSimulator(thresholds=th)
@@ -142,9 +186,29 @@ def exp1_alert_burden(spacings_nm=None, hmd_values_ft=None):
         k = int(np.argmin(r.horizontal_ranges))
         closest[float(sp)] = (r.min_horizontal_separation, r.timestamps[k],
                               r.own_states[k].heading_deg, r.intr_states[k].heading_deg,
-                              abs(r.own_states[k].z - r.intr_states[k].z))
+                              abs(r.own_states[k].z - r.intr_states[k].z),
+                              r.intr_states[k].z)
     return dict(spacings=np.asarray(spacings_nm), hmd_values=np.asarray(hmd_values_ft),
-                counts=counts, standards=standards, closest=closest)
+                counts=counts, standards=standards, closest=closest, speeds=speeds_kt)
+
+
+def exp1_overtaking(spacings_nm=None):
+    """Exp. 1 with the ownship 5 kt faster: which pairs the standard volumes flag, and where."""
+    if spacings_nm is None:
+        spacings_nm = np.linspace(0.4, 1.4, 25)
+    out = {}
+    for name, th in (("DO-365 terminal", TERMINAL), ("ASTM F3442", SUAS), ("DO-365 en route", ENROUTE)):
+        flagged = []
+        for sp in spacings_nm:
+            own, intr = _in_trail(sp, EXP1_OVERTAKE_KT)
+            r = EncounterSimulator(thresholds=th).run(own, intr, dt=DT, enable_recovery=False,
+                                                      enable_lookahead=False)
+            if r.experienced_lowc:
+                k = int(r.t_wc_actual / DT)
+                flagged.append((float(sp), r.min_horizontal_separation, r.intr_states[k].heading_deg,
+                                r.intr_states[k].z))
+        out[name] = flagged
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -155,13 +219,14 @@ def exp2_lead_time():
     unmit = _run(own, intr, recovery=False, t_rec=T_REC_ASSUMED)
     rec_assumed = _run(own, intr, t_rec=T_REC_ASSUMED)
     t_need = needed_t_rec(own, intr)
+    t_need_turns = {m: needed_t_rec(own, intr, maneuver=m) for m in RECOVERY_MANEUVERS[1:]}
     rec_ok = _run(own, intr, t_rec=T_REC_SUFFICIENT)
     neighbours = {}
     for s0 in (1.6, 1.7, 1.8, 1.9, 2.0):
         o, i = _conflict(intr_start_nm=s0)
         neighbours[s0] = needed_t_rec(o, i)
     return dict(own=own, intr=intr, unmit=unmit, rec_assumed=rec_assumed, rec_ok=rec_ok,
-                t_need=t_need, neighbours=neighbours)
+                t_need=t_need, t_need_turns=t_need_turns, neighbours=neighbours)
 
 
 # ---------------------------------------------------------------------------
@@ -191,34 +256,39 @@ def exp3_coupling(ranges_nm=None, t_recs=(6.0, 8.0, 10.0, 12.0)):
 # ---------------------------------------------------------------------------
 # Experiment 4: sensitivity to speeds, worst case over intruder start positions
 # ---------------------------------------------------------------------------
+def _exp4_geometry(args):
+    """One Exp. 4 geometry (run in a worker process)."""
+    vo, vi, s0, t_rec = args
+    own, intr = _conflict(speed_own_kt=vo, speed_intr_kt=vi, intr_start_nm=s0)
+    unmit = _run(own, intr, recovery=False, t_rec=t_rec)
+    out = dict(vo=vo, vi=vi, s0=s0, conflict=unmit.t_wc_actual is not None)
+    if not out["conflict"]:
+        return out
+    # The monitor projects the current velocity; a conflict created by a later
+    # turn may not be projected in time. Count those separately: their "needed
+    # T_rec" would measure the projection, not the recovery.
+    out["miss"] = unmit.t_mon is None or unmit.t_mon >= unmit.t_wc_actual
+    if out["miss"]:
+        return out
+    out["r_det"] = min_detection_range(own, intr, t_rec)
+    out["t_need"] = {m: needed_t_rec(own, intr, maneuver=m) for m in RECOVERY_MANEUVERS}
+    return out
+
+
 def exp4_speed_sensitivity(own_speeds=(70.0, 80.0, 90.0), intr_speeds=(80.0, 95.0, 110.0, 125.0),
-                           starts_nm=np.arange(1.2, 3.01, 0.1), t_rec=10.0, verbose=True):
-    rows = []
-    for vo in own_speeds:
-        for vi in intr_speeds:
-            r_det, t_need, n_conf, n_miss = [], [], 0, 0
-            for s0 in starts_nm:
-                own, intr = _conflict(speed_own_kt=vo, speed_intr_kt=vi, intr_start_nm=float(s0))
-                unmit = _run(own, intr, recovery=False, t_rec=t_rec)
-                if unmit.t_wc_actual is None:
-                    continue
-                n_conf += 1
-                # The monitor projects the current velocity; a conflict created by a later
-                # turn may not be projected in time. Count those separately: their "needed
-                # T_rec" would measure the projection, not the recovery.
-                if unmit.t_mon is None or unmit.t_mon >= unmit.t_wc_actual:
-                    n_miss += 1
-                    continue
-                r = min_detection_range(own, intr, t_rec)
-                if r is not None:
-                    r_det.append(r)
-                n = needed_t_rec(own, intr)
-                if n is not None:
-                    t_need.append(n)
-            rows.append(dict(vo=vo, vi=vi, n=n_conf, miss=n_miss, r_det=r_det, t_need=t_need))
-            if verbose:
-                print(f"  {vo:.0f}/{vi:.0f} kt: {n_conf} conflicting starts, {n_miss} missed", flush=True)
-    return dict(rows=rows, t_rec=t_rec, starts=np.asarray(starts_nm))
+                           starts_nm=np.arange(1.2, 3.01, 0.1), t_rec=10.0, workers=None):
+    """Exp. 2 encounter over speeds and intruder starts; every run ends at the first touchdown.
+
+    For each conflicting geometry: the detection range at which the lead-time
+    margin reaches zero for ``t_rec``, and the trigger lead time each recovery
+    in RECOVERY_MANEUVERS needs (None if no value up to 25 s keeps well clear).
+    """
+    from multiprocessing import Pool
+    jobs = [(float(vo), float(vi), round(float(s0), 1), t_rec)
+            for vo in own_speeds for vi in intr_speeds for s0 in starts_nm]
+    with Pool(processes=workers or max(1, (os.cpu_count() or 2) - 2)) as pool:
+        geoms = pool.map(_exp4_geometry, jobs)
+    return dict(geoms=geoms, t_rec=t_rec, starts=np.asarray(starts_nm), n_grid=len(jobs))
 
 
 def _dz_at_closest(rec):
@@ -229,10 +299,12 @@ def _dz_at_closest(rec):
 # ---------------------------------------------------------------------------
 # Text report (numbers quoted in the paper)
 # ---------------------------------------------------------------------------
-def report(e1, e2, e3, e4=None):
+def report(e1, e2, e3, e4=None, e1o=None):
     n = len(e1["spacings"])
     c = e1["counts"]
-    lines = ["[Exp 1] Alert burden against correctly flown in-trail traffic",
+    lines = ["[Exp 1] Loss of well clear against correctly flown in-trail traffic",
+             f"  ownship {e1['speeds'][0]:.0f} kt behind leader {e1['speeds'][1]:.0f} kt; each run ends "
+             f"when the leader touches down",
              f"  {n} deterministic geometries, spacing {e1['spacings'][0]:.2f}-"
              f"{e1['spacings'][-1]:.2f} NM; {len(e1['hmd_values'])} values of HMD*; "
              f"{3 * n * len(e1['hmd_values'])} runs (3 time/vertical variants)"]
@@ -250,11 +322,23 @@ def report(e1, e2, e3, e4=None):
                  f"ZTHR = 250 ft changes {diffs('tau0_z250')}")
     edge = max(e1["standards"]["DO-365 en route"], default=None)
     later = [s for s in e1["spacings"] if edge is not None and s > edge + 1e-9]
-    for sp in ([edge] if edge is not None else []) + later[:1]:
+    for sp in [e1["spacings"][0]] + ([edge] if edge is not None else []) + later[:1]:
         k = min(e1["closest"], key=lambda s: abs(s - sp))
-        d, t, ho, hi, dz = e1["closest"][k]
-        lines.append(f"  spacing {k:.2f} NM: closest {d:.0f} ft (vertical {dz:.0f} ft) at t={t:.1f} s "
-                     f"(ownship heading {ho:.0f}, leader {hi:.0f})")
+        d, t, ho, hi, dz, zl = e1["closest"][k]
+        lines.append(f"  spacing {k:.2f} NM: closest {d:.0f} ft (vertical {dz:.0f} ft, leader at {zl:.0f} ft) "
+                     f"at t={t:.1f} s (ownship heading {ho:.0f}, leader {hi:.0f})")
+    if e1o is not None:
+        lines.append(f"  overtaking variant (ownship {EXP1_OVERTAKE_KT[0]:.0f} kt, leader "
+                     f"{EXP1_OVERTAKE_KT[1]:.0f} kt):")
+        for name, fl in e1o.items():
+            if not fl:
+                lines.append(f"    {name}: 0/{n}")
+                continue
+            on_final = all(abs(h - 90.0) < 1e-6 for _, _, h, _ in fl)
+            lines.append(f"    {name}: {len(fl)}/{n}, pairs spaced up to {max(f[0] for f in fl):.2f} NM; "
+                         f"closest {min(f[1] for f in fl):.0f}-{max(f[1] for f in fl):.0f} ft"
+                         + (f"; all with the leader on final, below {max(f[3] for f in fl):.0f} ft"
+                            if on_final else ""))
 
     u, r8, ok = e2["unmit"], e2["rec_assumed"], e2["rec_ok"]
     own, intr = e2["own"], e2["intr"]
@@ -268,7 +352,8 @@ def report(e1, e2, e3, e4=None):
               f"{r8.t_wc_projected:.1f} s, margin = {r8.lead_time_margin_s:.2f} s (= trigger buffer)",
               f"     breakout flown: LoWC = {r8.experienced_lowc} from t = {r8.t_wc_actual:.1f} s for "
               f"{sum(r8.lowc_flags) * DT:.1f} s; closest {r8.min_horizontal_separation:.0f} ft",
-              f"  T_rec the breakout needs in this geometry: {e2['t_need']} s",
+              f"  T_rec the breakout needs in this geometry: {e2['t_need']} s; 45-deg turns instead: " +
+              ", ".join(f"{m} {v} s" for m, v in e2["t_need_turns"].items()),
               f"  T_rec = {T_REC_SUFFICIENT:.0f} s: t_mon = {ok.t_mon:.1f} s, LoWC = {ok.experienced_lowc}, "
               f"closest {ok.min_horizontal_separation:.0f} ft",
               "  needed T_rec for neighbouring starts: " +
@@ -284,25 +369,49 @@ def report(e1, e2, e3, e4=None):
                      f"plateau = {np.nanmax(e3['margins'][t_rec]):.2f} s")
 
     if e4 is not None:
-        lines.append(f"[Exp 4] Speed sensitivity, worst case over starts "
-                     f"{e4['starts'][0]:.1f}-{e4['starts'][-1]:.1f} NM, T_rec = {e4['t_rec']:.0f} s")
-        all_r, all_t, n_all, n_miss = [], [], 0, 0
-        for row in e4["rows"]:
-            n_all += row["n"]
-            n_miss += row["miss"]
-            if not row["r_det"]:
-                lines.append(f"  {row['vo']:.0f}/{row['vi']:.0f} kt: {row['n']} conflicts, "
-                             f"{row['miss']} missed by the projection")
-                continue
-            all_r += row["r_det"]
-            all_t += row["t_need"]
-            lines.append(f"  {row['vo']:.0f}/{row['vi']:.0f} kt: {row['n']} conflicts "
-                         f"({row['miss']} missed by the projection); "
-                         f"R*_det {min(row['r_det']):.2f}-{max(row['r_det']):.2f} NM; "
-                         f"needed T_rec {min(row['t_need']):.1f}-{max(row['t_need']):.1f} s")
-        lines.append(f"  overall: {n_all} conflicting geometries, {n_miss} not projected before t_wc; "
-                     f"over the rest, R*_det {min(all_r):.2f}-{max(all_r):.2f} NM; "
-                     f"needed T_rec {min(all_t):.1f}-{max(all_t):.1f} s")
+        lines += exp4_report(e4)
+    return lines
+
+
+def _spread(v, fmt):
+    q1, med, q3 = np.percentile(v, [25, 50, 75])
+    return (f"{fmt.format(min(v))}-{fmt.format(max(v))} (median {fmt.format(med)}, "
+            f"quartiles {fmt.format(q1)}-{fmt.format(q3)})")
+
+
+def exp4_report(e4):
+    g = e4["geoms"]
+    conf = [x for x in g if x["conflict"]]
+    proj = [x for x in conf if not x["miss"]]
+    lines = [f"[Exp 4] Speed sensitivity: {e4['n_grid']} geometries (ownship 70-90 kt x intruder 80-125 kt x "
+             f"starts {e4['starts'][0]:.1f}-{e4['starts'][-1]:.1f} NM in 0.1-NM steps); every run ends at the "
+             f"first touchdown; T_rec = {e4['t_rec']:.0f} s for R*_det",
+             f"  {len(conf)} lose well clear while both aircraft are airborne; "
+             f"{len(conf) - len(proj)} not projected before t_wc (excluded)"]
+    pairs = sorted({(x["vo"], x["vi"]) for x in g})
+    for vo, vi in pairs:
+        cell = [x for x in proj if x["vo"] == vo and x["vi"] == vi]
+        n_c = sum(1 for x in conf if x["vo"] == vo and x["vi"] == vi)
+        r = [x["r_det"] for x in cell if x["r_det"] is not None]
+        t = [x["t_need"]["breakout"] for x in cell if x["t_need"]["breakout"] is not None]
+        lines.append(f"  {vo:.0f}/{vi:.0f} kt: {n_c} conflicts"
+                     + (f"; R*_det {min(r):.2f}-{max(r):.2f} NM" if r else "")
+                     + (f"; breakout needs {min(t):.1f}-{max(t):.1f} s" if t else "")
+                     + (f"; {len(cell) - len(t)} with no feasible breakout" if len(cell) > len(t) else ""))
+    r = [x["r_det"] for x in proj if x["r_det"] is not None]
+    no_r = [(x["vo"], x["vi"], x["s0"]) for x in proj if x["r_det"] is None]
+    lines.append(f"  R*_det over {len(r)} geometries: {_spread(r, '{:.2f}')} NM"
+                 + (f"; undefined for {len(no_r)} {no_r}, where even detection at 3 NM leaves "
+                    f"less than T_rec" if no_r else ""))
+    for m in RECOVERY_MANEUVERS:
+        t = [x["t_need"][m] for x in proj if x["t_need"][m] is not None]
+        bad = [(x["vo"], x["vi"], x["s0"]) for x in proj if x["t_need"][m] is None]
+        lines.append(f"  needed T_rec, {m}: {_spread(t, '{:.1f}')} s over {len(t)}; "
+                     f"{len(bad)} with no value <= 25 s" + (f" {bad}" if bad else ""))
+    best = [min(v for v in x["t_need"].values() if v is not None) for x in proj
+            if any(v is not None for v in x["t_need"].values())]
+    lines.append(f"  needed T_rec, best of {'/'.join(RECOVERY_MANEUVERS)} per geometry: "
+                 f"{_spread(best, '{:.1f}')} s over {len(best)}")
     return lines
 
 
@@ -310,26 +419,44 @@ def report(e1, e2, e3, e4=None):
 # Figures
 # ---------------------------------------------------------------------------
 def plot_fig4(e1, out_dir):
-    n = len(e1["spacings"])
-    h = e1["hmd_values"]
-    rate = [100.0 * len(e1["counts"]["tau0_z450"][float(x)]) / n for x in h]
+    """Largest initial spacing whose correctly flown pair loses well clear, against HMD*.
 
-    fig, ax = plt.subplots(figsize=(fs.COL_W, 1.55), layout="constrained")
-    ax.plot(h, rate, color=fs.DARK, marker="o", ms=2.6, mfc=fs.DARK, zorder=3)
-    for x, label, color in ((1500, "DO-365\nterminal", fs.TERM),
-                            (2000, "ASTM\nF3442", fs.MID),
-                            (4000, "DO-365\nen route", fs.ALERT)):
-        y = 100.0 * len(e1["counts"]["tau0_z450"][float(x)]) / n
+    Unlike a fraction of the sweep, this does not depend on the spacing interval chosen.
+    """
+    h = e1["hmd_values"]
+    lo = e1["spacings"][0]
+    c = e1["counts"]
+
+    def largest(k):
+        return np.array([max(c[k][float(x)]) if c[k][float(x)] else np.nan for x in h])
+
+    fig, ax = plt.subplots(figsize=(fs.COL_W, 1.75), layout="constrained")
+    ax.axhspan(0.3, lo, color=fs.FILL, lw=0, zorder=0)
+    ax.text(4480, 0.35, rf"none flagged (all spacings $\geq${lo:.1f} NM)", ha="right", va="center",
+            fontsize=6.5, color=fs.DARK)
+    variants = (("tau0_z450", r"$\tau^*_{mod}=0$, $ZTHR=450$ ft", fs.DARK, "-"),
+                ("tau35_z450", r"$\tau^*_{mod}=35$ s, $ZTHR=450$ ft", fs.MID, (0, (4, 1.5))),
+                ("tau0_z250", r"$\tau^*_{mod}=0$, $ZTHR=250$ ft", fs.MID, (0, (1, 1.2))))
+    curves = {}
+    for k, lab, color, ls in variants:
+        curves[k] = largest(k)
+        ax.plot(h, curves[k], color=color, ls=ls, lw=1.0, label=lab, zorder=3)
+    # Each standard is marked on the curve of its own time and vertical thresholds
+    for x, k, label, color in ((1500, "tau0_z450", "DO-365\nterminal", fs.TERM),
+                               (2000, "tau0_z250", "ASTM\nF3442", fs.CREW),
+                               (4000, "tau35_z450", "DO-365\nen route", fs.ALERT)):
+        y = curves[k][list(h).index(x)]
+        y = (lo + 0.3) / 2 if np.isnan(y) else y
         ax.axvline(x, color=color, lw=0.6, ls=(0, (2, 2)), zorder=1)
-        ax.plot(x, y, "o", ms=5.5, mfc="white", mec=color, mew=1.0, zorder=4)
-        ax.text(x + (40 if x < 4000 else -40), 96, label, ha="left" if x < 4000 else "right",
+        ax.plot(x, y, "o", ms=5, mfc="white", mec=color, mew=1.0, zorder=4)
+        ax.text(x + (40 if x < 4000 else -40), 1.36, label, ha="left" if x < 4000 else "right",
                 va="top", fontsize=7, color=color)
     ax.set_xlabel(r"Horizontal threshold $HMD^*$ (ft)")
-    ax.set_ylabel("Violating geometries")
-    ax.yaxis.set_major_formatter(PercentFormatter(decimals=0))
+    ax.set_ylabel("Largest flagged\nspacing (NM)")
     ax.set_xlim(1000, 4500)
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0.3, 1.4)
     ax.grid(True, axis="y")
+    ax.legend(loc="center left", bbox_to_anchor=(0.0, 0.62), fontsize=6.5, handlelength=2.2)
     fs.save(fig, out_dir, "fig_nuisance_alert_rates")
 
 
@@ -342,28 +469,9 @@ def _lowc_overlay(ax, rec, color):
 
 
 def plot_fig5(e2, e3, out_dir):
-    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(fs.PAGE_W, 2.05), layout="constrained",
-                                     gridspec_kw={"width_ratios": [1.1, 1.0, 1.0]})
+    fig, (a2, a3) = plt.subplots(2, 1, figsize=(fs.COL_W, 3.3), layout="constrained")
     u, r8, ok = e2["unmit"], e2["rec_assumed"], e2["rec_ok"]
     t_end = 45.0
-
-    # (a) plan view
-    def path(rec, attr):
-        k = int(t_end / DT)
-        st = getattr(rec, attr)[:k]
-        return [s.x for s in st], [s.y for s in st]
-
-    a1.plot([0, 5000], [0, 0], color=fs.LIGHT, lw=4, solid_capstyle="butt", zorder=0)
-    a1.text(2500, -300, "runway 09", ha="center", va="top", fontsize=7, color=fs.DARK)
-    a1.plot(*path(u, "own_states"), color=fs.MID, ls=(0, (1.5, 1.5)), label="ownship")
-    a1.plot(*path(r8, "own_states"), color=fs.BLUES[1], lw=1.1, label=r"$F_8$, $T_{rec}=6$ s")
-    a1.plot(*path(ok, "own_states"), color=fs.OWN, lw=1.3, label=r"$F_8$, $T_{rec}=8$ s")
-    a1.plot(*path(u, "intr_states"), color=fs.CREW, ls=(0, (4, 2)), label="intruder")
-    a1.set_xlabel("Along runway (ft)")
-    a1.set_ylabel("Cross-runway (ft)")
-    a1.set_aspect("equal", adjustable="datalim")
-    a1.legend(loc="upper left", bbox_to_anchor=(-0.02, 1.04), handlelength=1.8)
-    a1.text(0.0, 1.02, "(a)", transform=a1.transAxes, fontsize=8, va="bottom")
 
     # (b) horizontal separation; shaded where well clear is lost (horizontal AND vertical)
     for rec, color, ls, lw, lab in ((u, fs.MID, (0, (1.5, 1.5)), 1.0, "unmitigated"),
@@ -388,7 +496,7 @@ def plot_fig5(e2, e3, out_dir):
     a2.set_ylim(0, 9000)
     a2.grid(True, axis="y")
     a2.legend(loc="upper right")
-    a2.text(0.0, 1.02, "(b)", transform=a2.transAxes, fontsize=8, va="bottom")
+    a2.text(0.0, 1.02, "(a)", transform=a2.transAxes, fontsize=8, va="bottom")
 
     # (c) lead-time margin versus detection range
     r = e3["ranges"]
@@ -411,7 +519,7 @@ def plot_fig5(e2, e3, out_dir):
     a3.grid(True, axis="y")
     a3.legend(title=r"$T_{rec}$", title_fontsize=7, loc="lower right",
               bbox_to_anchor=(1.0, 0.14), ncol=2, columnspacing=1.0, handlelength=2.2)
-    a3.text(0.0, 1.02, "(c)", transform=a3.transAxes, fontsize=8, va="bottom")
+    a3.text(0.0, 1.02, "(b)", transform=a3.transAxes, fontsize=8, va="bottom")
     fs.save(fig, out_dir, "fig_lead_time_recovery")
 
 
@@ -423,21 +531,31 @@ def main():
                     help="directory for teras_results.txt (default: results/)")
     ap.add_argument("--skip-sensitivity", action="store_true",
                     help="skip Experiment 4 (speed sensitivity, the slowest part)")
+    ap.add_argument("--exp4-json", default=None,
+                    help="take Experiment 4 from this exp4_geometries.json instead of running it")
     args = ap.parse_args()
 
     fs.apply()
+    os.makedirs(args.results, exist_ok=True)
     print("Running Experiment 1 ...", flush=True)
     e1 = exp1_alert_burden()
+    e1o = exp1_overtaking()
     print("Running Experiment 2 ...", flush=True)
     e2 = exp2_lead_time()
     print("Running Experiment 3 ...", flush=True)
     e3 = exp3_coupling()
     e4 = None
-    if not args.skip_sensitivity:
+    if args.exp4_json:
+        with open(args.exp4_json, encoding="utf-8") as f:
+            geoms = json.load(f)
+        e4 = dict(geoms=geoms, t_rec=10.0, starts=np.arange(1.2, 3.01, 0.1), n_grid=len(geoms))
+    elif not args.skip_sensitivity:
         print("Running Experiment 4 (several minutes) ...", flush=True)
         e4 = exp4_speed_sensitivity()
+        with open(os.path.join(args.results, "exp4_geometries.json"), "w", encoding="utf-8") as f:
+            json.dump(e4["geoms"], f, indent=1)
 
-    lines = report(e1, e2, e3, e4)
+    lines = report(e1, e2, e3, e4, e1o)
     print("\n".join(lines))
     os.makedirs(args.results, exist_ok=True)
     with open(os.path.join(args.results, "teras_results.txt"), "w", encoding="utf-8") as f:

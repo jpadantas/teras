@@ -83,11 +83,13 @@ def wellclear_pattern(out_dir):
 
     # two aircraft in trail on the downwind leg (heading 270)
     own = np.array([0.95, w])
-    spacing = 0.6
+    spacing = 0.5    # well inside the 4000-ft (0.66 NM) en-route radius
     lead = own - np.array([spacing, 0])
     aircraft(ax, *own, 270, 0.045, filled=True, color=fs.OWN)
     aircraft(ax, *lead, 270, 0.045, filled=False, color=fs.CREW)
-    ax.text(own[0], own[1] - 0.07, "ownship", ha="center", va="top", fontsize=7, color=fs.OWN)
+    ax.annotate("ownship", xy=(own[0] - 0.03, own[1] + 0.03), xytext=(0.6, 1.13),
+                ha="center", va="bottom", fontsize=7, color=fs.OWN,
+                arrowprops=dict(arrowstyle="-", lw=0.4, color=fs.OWN, shrinkA=1, shrinkB=1))
     ax.annotate("crewed traffic", xy=(lead[0] - 0.05, lead[1] + 0.03), xytext=(-0.4, 1.12),
                 ha="center", va="bottom", fontsize=7, color=fs.CREW,
                 arrowprops=dict(arrowstyle="-", lw=0.4, color=fs.CREW, shrinkA=1, shrinkB=1))
@@ -112,7 +114,7 @@ def wellclear_pattern(out_dir):
 
     # dimensions
     yd = 1.6
-    dim_arrow(ax, (lead[0], yd), (own[0], yd), "0.6 NM", offset=(0, 0.05), va="bottom")
+    dim_arrow(ax, (lead[0], yd), (own[0], yd), f"{spacing:g} NM", offset=(0, 0.05), va="bottom")
     ax.plot([lead[0], lead[0]], [w + 0.07, yd + 0.03], color=fs.LIGHT, lw=0.4, zorder=0)
     ax.plot([own[0], own[0]], [w + 0.07, yd + 0.03], color=fs.LIGHT, lw=0.4, zorder=0)
     dim_arrow(ax, (x_base - 0.2, 0), (x_base - 0.2, w), "0.75 NM", offset=(-0.04, 0), ha="right", rot=90)

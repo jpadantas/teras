@@ -69,6 +69,7 @@ SUAS = WellClearThresholds.astm_f3442()
 CONFLICT = dict(speed_own_kt=80.0, speed_intr_kt=95.0, intr_start_nm=1.8)
 T_REC_ASSUMED = 6.0
 T_REC_SUFFICIENT = 8.0
+T_BUF = MonitorConfig().buffer_margin_s   # SR-6 requires a lead-time margin of at least T_buf
 # Experiment 1: ownship and leader at the same speed, so the in-trail spacing is
 # kept and every loss of well clear is against correctly separated traffic. The
 # overtaking variant (ownship 5 kt faster) is reported separately.
@@ -129,18 +130,22 @@ def needed_t_rec(own, intr, th=TERMINAL, grid=np.arange(0.5, 25.01, 0.5), maneuv
     return None
 
 
-def min_detection_range(own, intr, t_rec, th=TERMINAL, lo=0.1, hi=3.0, iters=12):
-    """Detection range (NM) at which the lead-time margin reaches zero, by bisection."""
+def min_detection_range(own, intr, t_rec, th=TERMINAL, lo=0.1, hi=3.0, iters=12, m_min=0.0):
+    """Smallest detection range (NM) at which the lead-time margin reaches ``m_min``, by bisection.
+
+    ``m_min = 0`` gives the range below which no lead time is left at all;
+    ``m_min = T_BUF`` gives the range from which SR-6 (margin >= T_buf) is met.
+    """
     def margin(r):
         return _run(own, intr, th, t_rec=t_rec, sensor_range_ft=r * NM_TO_FT).lead_time_margin_s
 
     m_hi = margin(hi)
-    if m_hi is None or m_hi < 0:
+    if m_hi is None or m_hi < m_min - 1e-9:
         return None
     for _ in range(iters):
         mid = 0.5 * (lo + hi)
         m = margin(mid)
-        if m is not None and m >= 0:
+        if m is not None and m >= m_min - 1e-9:
             hi = mid
         else:
             lo = mid
@@ -236,7 +241,7 @@ def exp3_coupling(ranges_nm=None, t_recs=(6.0, 8.0, 10.0, 12.0)):
     if ranges_nm is None:
         ranges_nm = np.linspace(0.3, 1.2, 91)
     own, intr = _conflict()
-    margins, r_star = {}, {}
+    margins, r_star, r_sr6 = {}, {}, {}
     for t_rec in t_recs:
         m = np.array([
             (lambda r: r.lead_time_margin_s if r.lead_time_margin_s is not None else np.nan)(
@@ -250,7 +255,9 @@ def exp3_coupling(ranges_nm=None, t_recs=(6.0, 8.0, 10.0, 12.0)):
                 ranges_nm[k] - ranges_nm[k - 1]) / (m[k] - m[k - 1])
         else:
             r_star[t_rec] = None
-    return dict(ranges=np.asarray(ranges_nm), t_recs=list(t_recs), margins=margins, r_star=r_star)
+        r_sr6[t_rec] = min_detection_range(own, intr, t_rec, m_min=T_BUF)
+    return dict(ranges=np.asarray(ranges_nm), t_recs=list(t_recs), margins=margins, r_star=r_star,
+                r_sr6=r_sr6)
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +278,27 @@ def _exp4_geometry(args):
     if out["miss"]:
         return out
     out["r_det"] = min_detection_range(own, intr, t_rec)
+    out["r_det_sr6"] = min_detection_range(own, intr, t_rec, m_min=T_BUF)
     out["t_need"] = {m: needed_t_rec(own, intr, maneuver=m) for m in RECOVERY_MANEUVERS}
     return out
+
+
+def _exp4_sr6_range(args):
+    vo, vi, s0, t_rec = args
+    own, intr = _conflict(speed_own_kt=vo, speed_intr_kt=vi, intr_start_nm=s0)
+    return min_detection_range(own, intr, t_rec, m_min=T_BUF)
+
+
+def exp4_add_sr6_ranges(geoms, t_rec=10.0, workers=None):
+    """Add ``r_det_sr6`` to Exp. 4 geometries that lack it (results from an older run)."""
+    from multiprocessing import Pool
+    todo = [g for g in geoms if g["conflict"] and not g["miss"] and "r_det_sr6" not in g]
+    if todo:
+        with Pool(processes=workers or max(1, (os.cpu_count() or 2) - 2)) as pool:
+            vals = pool.map(_exp4_sr6_range, [(g["vo"], g["vi"], g["s0"], t_rec) for g in todo])
+        for g, v in zip(todo, vals):
+            g["r_det_sr6"] = v
+    return len(todo)
 
 
 def exp4_speed_sensitivity(own_speeds=(70.0, 80.0, 90.0), intr_speeds=(80.0, 95.0, 110.0, 125.0),
@@ -363,9 +389,11 @@ def report(e1, e2, e3, e4=None, e1o=None):
               f"  {len(e3['ranges'])} detection ranges x {len(e3['t_recs'])} values of T_rec = "
               f"{len(e3['ranges']) * len(e3['t_recs'])} runs"]
     for t_rec in e3["t_recs"]:
-        rs = e3["r_star"][t_rec]
-        lines.append(f"  T_rec={t_rec:.0f} s: R*_det = "
+        rs, r6 = e3["r_star"][t_rec], e3["r_sr6"][t_rec]
+        lines.append(f"  T_rec={t_rec:.0f} s: margin zero at R = "
                      f"{f'{rs:.2f} NM' if rs is not None else 'not reached'}; "
+                     f"SR-6 (margin >= T_buf) met from R = "
+                     f"{f'{r6:.2f} NM' if r6 is not None else 'not reached'}; "
                      f"plateau = {np.nanmax(e3['margins'][t_rec]):.2f} s")
 
     if e4 is not None:
@@ -398,9 +426,13 @@ def exp4_report(e4):
                      + (f"; R*_det {min(r):.2f}-{max(r):.2f} NM" if r else "")
                      + (f"; breakout needs {min(t):.1f}-{max(t):.1f} s" if t else "")
                      + (f"; {len(cell) - len(t)} with no feasible breakout" if len(cell) > len(t) else ""))
+    r6 = [x["r_det_sr6"] for x in proj if x.get("r_det_sr6") is not None]
+    if r6:
+        lines.append(f"  SR-6 minimum detection range (margin >= T_buf) over {len(r6)} geometries: "
+                     f"{_spread(r6, '{:.2f}')} NM")
     r = [x["r_det"] for x in proj if x["r_det"] is not None]
     no_r = [(x["vo"], x["vi"], x["s0"]) for x in proj if x["r_det"] is None]
-    lines.append(f"  R*_det over {len(r)} geometries: {_spread(r, '{:.2f}')} NM"
+    lines.append(f"  zero-margin range over {len(r)} geometries: {_spread(r, '{:.2f}')} NM"
                  + (f"; undefined for {len(no_r)} {no_r}, where even detection at 3 NM leaves "
                     f"less than T_rec" if no_r else ""))
     for m in RECOVERY_MANEUVERS:
@@ -500,18 +532,19 @@ def plot_fig5(e2, e3, out_dir):
 
     # (c) lead-time margin versus detection range
     r = e3["ranges"]
-    a3.axhspan(-10, 0, color=fs.ALERT_TINT, lw=0, zorder=0)
-    a3.axhline(0, color=fs.ALERT, lw=0.7)
-    a3.axhline(MonitorConfig().buffer_margin_s, color=fs.MID, lw=0.5, ls=(0, (1, 1.5)))
-    a3.text(r[-1] - 0.01, 1.15, "trigger buffer (1 s)", ha="right", va="bottom",
+    a3.axhspan(-10, T_BUF, color=fs.ALERT_TINT, lw=0, zorder=0)
+    a3.axhline(T_BUF, color=fs.ALERT, lw=0.7)
+    a3.axhline(0, color=fs.MID, lw=0.5, ls=(0, (1, 1.5)))
+    a3.text(r[-1] - 0.01, T_BUF + 0.15, r"$T_{buf}$ = 1 s", ha="right", va="bottom",
             fontsize=7, color=fs.DARK)
-    a3.text(r[-1] - 0.01, -9.4, "SR-6 not met", ha="right", va="bottom", fontsize=7,
+    a3.text(r[-1] - 0.01, -9.4, r"SR-6 not met ($\Delta t_{margin} < T_{buf}$)", ha="right",
+            va="bottom", fontsize=7,
             color=fs.ALERT)
     styles = ["-", (0, (4, 1.5)), "-", (0, (4, 1.5))]
     for t_rec, color, ls in zip(e3["t_recs"], fs.BLUES, styles):
         a3.plot(r, e3["margins"][t_rec], color=color, ls=ls, label=f"{t_rec:.0f} s")
-        if e3["r_star"][t_rec] is not None:
-            a3.plot(e3["r_star"][t_rec], 0, "o", ms=3, color=color, zorder=5)
+        if e3["r_sr6"][t_rec] is not None:
+            a3.plot(e3["r_sr6"][t_rec], T_BUF, "o", ms=3, color=color, zorder=5)
     a3.set_xlabel(r"Detection range $R_{det}$ (NM)")
     a3.set_ylabel(r"Lead-time margin $\Delta t_{margin}$ (s)")
     a3.set_xlim(r[0], r[-1])
@@ -548,6 +581,9 @@ def main():
     if args.exp4_json:
         with open(args.exp4_json, encoding="utf-8") as f:
             geoms = json.load(f)
+        if exp4_add_sr6_ranges(geoms):
+            with open(args.exp4_json, "w", encoding="utf-8") as f:
+                json.dump(geoms, f, indent=1)
         e4 = dict(geoms=geoms, t_rec=10.0, starts=np.arange(1.2, 3.01, 0.1), n_grid=len(geoms))
     elif not args.skip_sensitivity:
         print("Running Experiment 4 (several minutes) ...", flush=True)

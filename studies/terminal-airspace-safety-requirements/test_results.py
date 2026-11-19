@@ -83,7 +83,8 @@ def test_exp2_optimistic_t_rec_loses_well_clear(e2):
 
 def test_exp3_minimum_detection_range():
     e3 = exp3_coupling(t_recs=(10.0,))
-    assert e3["r_star"][10.0] == pytest.approx(0.58, abs=0.01)
+    assert e3["r_star"][10.0] == pytest.approx(0.58, abs=0.01)   # margin reaches zero
+    assert e3["r_sr6"][10.0] == pytest.approx(0.61, abs=0.01)    # SR-6 met (margin >= T_buf)
     assert np.nanmax(e3["margins"][10.0]) == pytest.approx(1.0, abs=1e-6)
 
 
@@ -98,6 +99,8 @@ def test_exp4_aggregates_quoted_in_the_paper(e4):
     assert len(e4) == 87
     r = [g["r_det"] for g in e4 if g["r_det"] is not None]
     assert (round(min(r), 2), round(max(r), 2), round(float(np.median(r)), 2)) == (0.29, 0.67, 0.57)
+    r6 = [g["r_det_sr6"] for g in e4 if g.get("r_det_sr6") is not None]
+    assert (len(r6), round(min(r6), 2), round(max(r6), 2), round(float(np.median(r6)), 2)) == (85, 0.29, 0.70, 0.60)
     tb = [g["t_need"]["breakout"] for g in e4 if g["t_need"]["breakout"] is not None]
     assert (min(tb), max(tb), float(np.median(tb)), len(e4) - len(tb)) == (5.0, 14.5, 8.0, 2)
     tl = [g["t_need"]["left"] for g in e4 if g["t_need"]["left"] is not None]

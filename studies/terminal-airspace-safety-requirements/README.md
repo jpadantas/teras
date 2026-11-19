@@ -68,7 +68,9 @@ terminal-area volume.
   versions let a landed aircraft roll on along the runway, which produced
   spurious "conflicts" on the ground).
 - The 1 s lead-time margin is the monitor's trigger buffer, not a measured
-  margin (see the repository README).
+  margin (see the repository README). SR-6 requires a margin of at least the
+  buffer, so the minimum detection ranges quoted for SR-6 (Exps. 3 and 4) are
+  where the margin reaches T_buf; the report also gives where it reaches zero.
 - The recovery starts on the step after the trigger, with no latency or
   roll-in; the breakout is a climbing (~700 ft/min) 25-deg-bank turn to
   heading 060, whatever the intruder does. The "needed T_rec" is the trigger
